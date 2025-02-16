@@ -23,8 +23,8 @@
       "debug": false
     },
     {
-      "name": "homebridge-plugin-name",
-      "platform": "ExampleHomebridgePlugin"
+      "name": "homebridge-sulion-fan",
+      "platform": "HomebridgeSulionFan"
     }
   ],
   "accessories": []

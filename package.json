@@ -4,7 +4,7 @@
   "type": "module",
   "version": "1.0.0",
   "private": true,
-  "description": "It's only a homebridge plugin for controlling Sulion Fans",
+  "description": "Just a homebridge plugin for controlling Sulion ceiling fans",
   "author": "Jorgeface",
   "license": "Apache-2.0",
   "homepage": "https://github.com/jorgeface/homebridge-sulion-fan#readme",
@@ -45,6 +45,7 @@
     "typescript-eslint": "^8.12.2"
   },
   "dependencies": {
-    "homebridge-lib": "^7.1.0"
+    "homebridge-lib": "^7.1.0",
+    "tuyapi": "github:codetheweb/tuyapi"
   }
 }

@@ -1,148 +1,214 @@
-import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge';
+import type { Characteristic, CharacteristicValue, PlatformAccessory, Service, Logging } from 'homebridge';
 
-import type { ExampleHomebridgePlatform } from './platform.js';
+import type { HomebridgeSulionFanPlatform } from './platform.js';
+import TuyAPI from 'tuyapi';
+import type TuyaDevice from 'tuyapi';
 
 /**
- * Platform Accessory
+ * Sulion Fan Accessory
  * An instance of this class is created for each accessory your platform registers
  * Each accessory may expose multiple services of different service types.
  */
-export class ExamplePlatformAccessory {
-  private service: Service;
-
-  /**
-   * These are just used to create a working example
-   * You should implement your own code to track the state of your accessory
-   */
-  private exampleStates = {
+export class SulionFanAccessory {
+  private ledService: Service;
+  private fanService: Service;
+  private readonly Characteristic: typeof Characteristic;
+  private readonly log: Logging;
+  private readonly tuyaDevice: TuyaDevice;
+  private stateHasChanged = false;
+  private ledState = {
     On: false,
-    Brightness: 100,
+    Brightness: 50,
+    Temperature: 140,
   };
+  private fanState = {
+    On: 0 as CharacteristicValue,
+    Speed: 25,
+    Rotation: 0,
+  };
+  
 
   constructor(
-    private readonly platform: ExampleHomebridgePlatform,
+    private readonly platform: HomebridgeSulionFanPlatform,
     private readonly accessory: PlatformAccessory,
   ) {
+
+    this.Characteristic = this.platform.Characteristic;
+    this.log = this.platform.log;
+
+    this.log.info(`${accessory.displayName}:`, 'Init...');
+    
     // set accessory information
     this.accessory.getService(this.platform.Service.AccessoryInformation)!
-      .setCharacteristic(this.platform.Characteristic.Manufacturer, 'Default-Manufacturer')
-      .setCharacteristic(this.platform.Characteristic.Model, 'Default-Model')
-      .setCharacteristic(this.platform.Characteristic.SerialNumber, 'Default-Serial');
+      .setCharacteristic(this.platform.Characteristic.Manufacturer, 'Sulion')
+      .setCharacteristic(this.platform.Characteristic.Model, 'Sulion Fan')
+      .setCharacteristic(this.platform.Characteristic.SerialNumber, accessory.context.device.id);
+    
+    // Fan
+    this.fanService = this.accessory.getService(this.platform.Service.Fanv2) || this.accessory.addService(this.platform.Service.Fanv2);
+    this.fanService.setCharacteristic(this.Characteristic.Name, accessory.context.device.name);
+    this.fanService.getCharacteristic(this.Characteristic.Active)
+      .onGet(this.getFanOn.bind(this))
+      .onSet(this.setFanOn.bind(this));
 
-    // get the LightBulb service if it exists, otherwise create a new LightBulb service
-    // you can create multiple services for each accessory
+    // Fan speed
+    this.fanService.getCharacteristic(this.platform.Characteristic.RotationSpeed)
+      .onGet(this.getFanSpeed.bind(this))
+      .onSet(this.setFanSpeed.bind(this));
+    // Fan rotation
+    this.fanService.getCharacteristic(this.platform.Characteristic.RotationDirection)   
+      .onGet(this.getFanRotation.bind(this))
+      .onSet(this.setFanRotation.bind(this));
+    
+    // Led
+    this.ledService = this.accessory.getService(this.platform.Service.Lightbulb) || this.accessory.addService(this.platform.Service.Lightbulb);
+    this.ledService.getCharacteristic(this.platform.Characteristic.On)
+      .onGet(this.getLedOn.bind(this))
+      .onSet(this.setLedOn.bind(this));
+    // Brightness
+    this.ledService.getCharacteristic(this.platform.Characteristic.Brightness)
+      .onGet(this.getLedBrightness.bind(this))
+      .onSet(this.setLedBrightness.bind(this));
+    /*// Temperature
+    this.lightService.getCharacteristic(this.platform.Characteristic.ColorTemperature)
+      .onGet(this.getLedTemperature.bind(this))
+      .onSet(this.setLedTemperature.bind(this));
+    */
 
-    if (accessory.context.device.CustomService) {
-      // This is only required when using Custom Services and Characteristics not support by HomeKit
-      this.service = this.accessory.getService(this.platform.CustomServices[accessory.context.device.CustomService]) ||
-        this.accessory.addService(this.platform.CustomServices[accessory.context.device.CustomService]);
-    } else {
-      this.service = this.accessory.getService(this.platform.Service.Lightbulb) || this.accessory.addService(this.platform.Service.Lightbulb);
-    }
+    this.tuyaDevice = new TuyAPI({
+      id: accessory.context.device.id,
+      key: accessory.context.device.key,
+      ip: accessory.context.device.ip,
+      version: 3.4, 
+    });
+  
+    //let stateHasChanged = false;
+  
+    // Find device on network
+    this.tuyaDevice.find().then(() => {
+      // Connect to device
+      this.tuyaDevice.connect();
+    });
 
-    // set the service name, this is what is displayed as the default name on the Home app
-    // in this example we are using the name we stored in the `accessory.context` in the `discoverDevices` method.
-    this.service.setCharacteristic(this.platform.Characteristic.Name, accessory.context.device.exampleDisplayName);
+    // Add event listeners
+    this.tuyaDevice.on('connected', () => {
+      console.log('Connected to device!');
+    });
 
-    // each service must implement at-minimum the "required characteristics" for the given service type
-    // see https://developers.homebridge.io/#/service/Lightbulb
+    this.tuyaDevice.on('disconnected', () => {
+      console.log('Disconnected from device.');
+    });
+    
+    this.tuyaDevice.on('error', error => {
+      console.log('Error!', error);
+    });
 
-    // register handlers for the On/Off Characteristic
-    this.service.getCharacteristic(this.platform.Characteristic.On)
-      .onSet(this.setOn.bind(this)) // SET - bind to the `setOn` method below
-      .onGet(this.getOn.bind(this)); // GET - bind to the `getOn` method below
+    /* this.tuyaDevice.on('data', data => {
+      console.log('Data from device:', data);
+    
+      console.log(`Boolean status of default property: ${data.dps['1']}.`);
+    
+      // Set default property to opposite
+      if (!stateHasChanged) {
+        this.tuyaDevice.set({set: !(data.dps['1'])});
+    
+        // Otherwise we'll be stuck in an endless
+        // loop of toggling the state.
+        stateHasChanged = true;
+      }
+    });*/
 
-    // register handlers for the Brightness Characteristic
-    this.service.getCharacteristic(this.platform.Characteristic.Brightness)
-      .onSet(this.setBrightness.bind(this)); // SET - bind to the `setBrightness` method below
-
-    /**
-     * Creating multiple services of the same type.
-     *
-     * To avoid "Cannot add a Service with the same UUID another Service without also defining a unique 'subtype' property." error,
-     * when creating multiple services of the same type, you need to use the following syntax to specify a name and subtype id:
-     * this.accessory.getService('NAME') || this.accessory.addService(this.platform.Service.Lightbulb, 'NAME', 'USER_DEFINED_SUBTYPE_ID');
-     *
-     * The USER_DEFINED_SUBTYPE must be unique to the platform accessory (if you platform exposes multiple accessories, each accessory
-     * can use the same subtype id.)
-     */
-
-    // Example: add two "motion sensor" services to the accessory
-    const motionSensorOneService = this.accessory.getService('Motion Sensor One Name')
-      || this.accessory.addService(this.platform.Service.MotionSensor, 'Motion Sensor One Name', 'YourUniqueIdentifier-1');
-
-    const motionSensorTwoService = this.accessory.getService('Motion Sensor Two Name')
-      || this.accessory.addService(this.platform.Service.MotionSensor, 'Motion Sensor Two Name', 'YourUniqueIdentifier-2');
-
-    /**
-     * Updating characteristics values asynchronously.
-     *
-     * Example showing how to update the state of a Characteristic asynchronously instead
-     * of using the `on('get')` handlers.
-     * Here we change update the motion sensor trigger states on and off every 10 seconds
-     * the `updateCharacteristic` method.
-     *
-     */
-    let motionDetected = false;
-    setInterval(() => {
-      // EXAMPLE - inverse the trigger
-      motionDetected = !motionDetected;
-
-      // push the new value to HomeKit
-      motionSensorOneService.updateCharacteristic(this.platform.Characteristic.MotionDetected, motionDetected);
-      motionSensorTwoService.updateCharacteristic(this.platform.Characteristic.MotionDetected, !motionDetected);
-
-      this.platform.log.debug('Triggering motionSensorOneService:', motionDetected);
-      this.platform.log.debug('Triggering motionSensorTwoService:', !motionDetected);
+    // Disconnect after 10 seconds
+    setTimeout(() => { 
+      this.tuyaDevice.disconnect(); 
     }, 10000);
+
   }
 
-  /**
-   * Handle "SET" requests from HomeKit
-   * These are sent when the user changes the state of an accessory, for example, turning on a Light bulb.
-   */
-  async setOn(value: CharacteristicValue) {
-    // implement your own code to turn your device on/off
-    this.exampleStates.On = value as boolean;
-
-    this.platform.log.debug('Set Characteristic On ->', value);
+  sendCommand(dps: number, value: string | number | boolean) {
+    this.log.debug(`${this.accessory.displayName}:`, `sendCommand(${dps}, ${value})`);
+    this.tuyaDevice.set({ dps, set: value });
   }
 
-  /**
-   * Handle the "GET" requests from HomeKit
-   * These are sent when HomeKit wants to know the current state of the accessory, for example, checking if a Light bulb is on.
-   *
-   * GET requests should return as fast as possible. A long delay here will result in
-   * HomeKit being unresponsive and a bad user experience in general.
-   *
-   * If your device takes time to respond you should update the status of your device
-   * asynchronously instead using the `updateCharacteristic` method instead.
-   * In this case, you may decide not to implement `onGet` handlers, which may speed up
-   * the responsiveness of your device in the Home app.
-
-   * @example
-   * this.service.updateCharacteristic(this.platform.Characteristic.On, true)
-   */
-  async getOn(): Promise<CharacteristicValue> {
-    // implement your own code to check if the device is on
-    const isOn = this.exampleStates.On;
-
-    this.platform.log.debug('Get Characteristic On ->', isOn);
-
-    // if you need to return an error to show the device as "Not Responding" in the Home app:
-    // throw new this.platform.api.hap.HapStatusError(this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-
-    return isOn;
+  getFanOn() {
+    this.log.debug(`${this.accessory.displayName}:`, `getFanOn() => ${this.fanState.On === 0 ? 'INACTIVE' : 'ACTIVE'}`);
+    return this.fanState.On;
   }
 
-  /**
-   * Handle "SET" requests from HomeKit
-   * These are sent when the user changes the state of an accessory, for example, changing the Brightness
-   */
-  async setBrightness(value: CharacteristicValue) {
-    // implement your own code to set the brightness
-    this.exampleStates.Brightness = value as number;
-
-    this.platform.log.debug('Set Characteristic Brightness -> ', value);
+  setFanOn(value: CharacteristicValue) {
+    this.fanState.On = this.fanState.On === this.Characteristic.Active.INACTIVE
+      ? this.Characteristic.Active.ACTIVE
+      : this.Characteristic.Active.INACTIVE;
+    if (value !== this.fanState.On) {
+      this.fanService.updateCharacteristic(this.Characteristic.Active, this.fanState.On);
+    }
+    this.sendCommand(60, this.fanState.On === 1);
+    this.log.debug(`${this.accessory.displayName}:`, `setFanOn() => ${value === 0 ? 'INACTIVE' : 'ACTIVE'}`);
   }
+
+  getFanSpeed() {
+    this.log.debug(`${this.accessory.displayName}:`, `getFanSpeed() => ${this.fanState.Speed}`);
+    return this.fanState.Speed;
+  }
+
+  setFanSpeed(value: CharacteristicValue) {
+    if (value.valueOf() === 0) {
+      this.sendCommand(60, false);
+    }else{
+      this.fanState.Speed = value.valueOf() as number;
+      this.sendCommand(62, this.toStep(this.fanState.Speed));
+    }
+    this.log.debug(`${this.accessory.displayName}:`, `setFanSpeed() => ${this.toStep(this.fanState.Speed)}`);
+  }
+
+  getFanRotation() {
+    this.log.debug(`${this.accessory.displayName}:`, `getFanRotation() => ${this.fanState.Rotation === 0 ? 'CLOCKWISE' : 'COUNTER_CLOCKWISE'}`);
+    return this.fanState.On;
+  }
+
+  setFanRotation(value: CharacteristicValue) {
+    this.fanState.Rotation = this.fanState.Rotation === this.Characteristic.RotationDirection.CLOCKWISE
+      ? this.Characteristic.RotationDirection.CLOCKWISE
+      : this.Characteristic.RotationDirection.COUNTER_CLOCKWISE;
+    if (value !== this.fanState.Rotation) {
+      this.fanService.updateCharacteristic(this.Characteristic.RotationDirection, this.fanState.Rotation);
+    }
+    this.sendCommand(63, this.fanState.Rotation === 0 ? 'forward' : 'reverse');
+    this.log.debug(`${this.accessory.displayName}:`, `setFanRotation() => ${this.fanState.Rotation === 0 ? 'CLOCKWISE' : 'COUNTER_CLOCKWISE'}`);
+  }
+
+  getLedOn() {
+    this.log.debug(`${this.accessory.displayName}:`, `getLightOn() => ${this.ledState.On ? 'ON' : 'OFF'}`);
+    return this.ledState.On;
+  }
+
+  setLedOn(value: CharacteristicValue) {
+    if (value !== this.ledState.On) {
+      this.ledState.On = value as boolean;
+      this.sendCommand(20, this.ledState.On);
+    }
+    this.log.debug(`${this.accessory.displayName}:`, `setLightOn() => ${this.ledState.On ? 'ON' : 'OFF'}`);
+  }
+
+  getLedBrightness() {
+    this.log.debug(`${this.accessory.displayName}:`, `getLedBrightness() => ${this.ledState.Brightness}`);
+    return this.ledState.Brightness;
+  }
+
+  setLedBrightness(value: CharacteristicValue) {
+    if (value.valueOf() === 0) {
+      this.sendCommand(20, false);
+    }else{
+      this.ledState.Brightness = value.valueOf() as number;
+      this.sendCommand(22, this.ledState.Brightness * 10);
+    }
+    this.log.debug(`${this.accessory.displayName}:`, `setLedBrightness() => ${this.ledState.Brightness}`);
+  }
+
+  toStep(percent: number) {
+    const etapes = [1, 2, 3, 4, 5, 6];
+    const etapeIndex = Math.floor(percent / 16.67); // 100 / 6 = 16.67
+    return etapes[etapeIndex];
+  }
+
 }
