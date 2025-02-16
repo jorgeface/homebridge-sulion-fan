@@ -1,5 +1,5 @@
 {
-  "pluginAlias": "ExampleHomebridgePlugin",
+  "pluginAlias": "HomebridgeSulionFan",
   "pluginType": "platform",
   "singular": true,
   "strictValidation": false,
@@ -10,8 +10,27 @@
         "title": "Name",
         "type": "string",
         "required": true,
-        "default": "Example Dynamic Platform"
+        "default": "Name of the Sulion fan"
+      },
+      "ip": {
+        "title": "IP",
+        "type": "string",
+        "required": true,
+        "default": "IP Address of the Sulion fan"
+      },
+      "id": {
+        "title": "ID",
+        "type": "string",
+        "required": true,
+        "default": "Tuya Local ID"
+      },
+      "key": {
+        "title": "Key",
+        "type": "string",
+        "required": true,
+        "default": "Tuya Local Key"
       }
+
     }
   }
 }
